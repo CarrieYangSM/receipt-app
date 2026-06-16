@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Receipt Breakdown</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "PingFang HK", "Microsoft JhengHei", Arial, sans-serif;
+         background: #f5f5f5; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 40px 20px; }
+  h1 { color: #C62828; margin-bottom: 6px; }
+  .subtitle { color: #888; font-size: 14px; margin-bottom: 32px; }
+
+  /* Upload area */
+  .upload-box { background: #fff; border: 2px dashed #E53935; border-radius: 12px;
+                width: 100%; max-width: 560px; padding: 48px 24px; text-align: center;
+                cursor: pointer; transition: background 0.2s; }
+  .upload-box.drag-over { background: #FFF5F5; }
+  .upload-box input[type=file] { display: none; }
+  .upload-icon { font-size: 48px; margin-bottom: 12px; }
+  .upload-box p { color: #555; font-size: 15px; }
+  .upload-box span { color: #C62828; font-weight: 600; }
+  .preview { max-width: 100%; max-height: 240px; margin-top: 16px; border-radius: 8px;
+             display: none; object-fit: contain; }
+
+  /* Button */
+  .btn { margin-top: 20px; background: #E53935; color: #fff; border: none;
+         border-radius: 8px; padding: 12px 36px; font-size: 16px; cursor: pointer;
+         display: none; transition: background 0.2s; }
+  .btn:hover { background: #C62828; }
+  .btn:disabled { background: #aaa; cursor: not-allowed; }
+
+  /* Status */
+  .status { margin-top: 16px; font-size: 14px; color: #888; min-height: 20px; }
+
+  /* Result */
+  #result { width: 100%; max-width: 700px; margin-top: 32px; background: #fff;
+            border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            display: none; }
+  .result-actions { display: flex; gap: 12px; margin-bottom: 16px; }
+  .btn-outline { background: #fff; color: #C62828; border: 1.5px solid #C62828;
+                 border-radius: 8px; padding: 8px 20px; font-size: 14px; cursor: pointer; }
+  .btn-outline:hover { background: #FFF5F5; }
+</style>
+</head>
+<body>
+<h1>Receipt Breakdown</h1>
+<p class="subtitle">Upload a food delivery receipt to calculate per-item cost after discounts</p>
+
+<div class="upload-box" id="uploadBox">
+  <input type="file" id="fileInput" accept="image/*">
+  <div class="upload-icon">🧾</div>
+  <p>Drag & drop your receipt here<br>or <span>click to browse</span></p>
+  <img class="preview" id="preview" alt="preview">
+</div>
+
+<button class="btn" id="processBtn">Calculate Breakdown</button>
+<div class="status" id="status"></div>
+
+<div id="result">
+  <div class="result-actions">
+    <button class="btn-outline" id="downloadBtn">⬇ Download HTML</button>
+    <button class="btn-outline" id="resetBtn">↩ New Receipt</button>
+  </div>
+  <div id="resultContent"></div>
+</div>
+
+<script>
+  const uploadBox = document.getElementById('uploadBox');
+  const fileInput = document.getElementById('fileInput');
+  const preview   = document.getElementById('preview');
+  const processBtn= document.getElementById('processBtn');
+  const status    = document.getElementById('status');
+  const result    = document.getElementById('result');
+  const resultContent = document.getElementById('resultContent');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const resetBtn  = document.getElementById('resetBtn');
+
+  let selectedFile = null;
+  let generatedHtml = '';
+
+  uploadBox.addEventListener('click', () => fileInput.click());
+  uploadBox.addEventListener('dragover', e => { e.preventDefault(); uploadBox.classList.add('drag-over'); });
+  uploadBox.addEventListener('dragleave', () => uploadBox.classList.remove('drag-over'));
+  uploadBox.addEventListener('drop', e => {
+    e.preventDefault();
+    uploadBox.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+
+  function handleFile(file) {
+    selectedFile = file;
+    const reader = new FileReader();
+    reader.onload = e => {
+      preview.src = e.target.result;
+      preview.style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+    processBtn.style.display = 'inline-block';
+    status.textContent = `Selected: ${file.name}`;
+    result.style.display = 'none';
+  }
+
+  processBtn.addEventListener('click', async () => {
+    if (!selectedFile) return;
+    processBtn.disabled = true;
+    status.textContent = '⏳ Analysing receipt...';
+
+    const formData = new FormData();
+    formData.append('image', selectedFile);
+
+    try {
+      const res = await fetch('/process', { method: 'POST', body: formData });
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+
+      generatedHtml = json.html;
+      resultContent.innerHTML = generatedHtml;
+      result.style.display = 'block';
+      status.textContent = '✅ Done!';
+    } catch (err) {
+      status.textContent = '❌ Error: ' + err.message;
+    } finally {
+      processBtn.disabled = false;
+    }
+  });
+
+  downloadBtn.addEventListener('click', () => {
+    const blob = new Blob([generatedHtml], { type: 'text/html' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `receipt_breakdown_${new Date().toISOString().slice(0,10)}.html`;
+    a.click();
+  });
+
+  resetBtn.addEventListener('click', () => {
+    selectedFile = null;
+    fileInput.value = '';
+    preview.style.display = 'none';
+    processBtn.style.display = 'none';
+    result.style.display = 'none';
+    status.textContent = '';
+    generatedHtml = '';
+  });
+</script>
+</body>
+</html>
