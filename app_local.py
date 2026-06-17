@@ -4,19 +4,25 @@ import json
 import re
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template
+from openai import OpenAI
 from dotenv import load_dotenv
 from PIL import Image
-import google.generativeai as genai
+import pytesseract
 
 load_dotenv()
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel("gemini-1.5-flash")
+# If tesseract is not in PATH, set it explicitly:
+# pytesseract.pytesseract.tesseract_cmd = "/opt/homebrew/bin/tesseract"
+
+client = OpenAI(
+    api_key=os.getenv("DEEPSEEK_API_KEY"),
+    base_url="https://api.deepseek.com/v1",
+)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10MB max
 
-SYSTEM_PROMPT = """You are a receipt parser. Extract data from this food delivery receipt image (may be in Chinese or English) and return ONLY valid JSON.
+SYSTEM_PROMPT = """You are a receipt parser. Extract data from a food delivery receipt (text may be in Chinese or English) and return ONLY valid JSON.
 
 Return this exact structure:
 {
@@ -44,10 +50,25 @@ Rules:
 - Return ONLY the JSON, no markdown, no explanation"""
 
 
-def parse_receipt(image_bytes: bytes) -> dict:
+def ocr_image(image_bytes: bytes) -> str:
     img = Image.open(io.BytesIO(image_bytes))
-    response = model.generate_content([SYSTEM_PROMPT, img])
-    raw = response.text.strip()
+    w, h = img.size
+    if w < 1000:
+        scale = 1000 / w
+        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+    return pytesseract.image_to_string(img, lang="chi_tra+eng")
+
+
+def parse_receipt(ocr_text: str) -> dict:
+    response = client.chat.completions.create(
+        model="deepseek-chat",
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"Parse this receipt:\n\n{ocr_text}"},
+        ],
+        max_tokens=1024,
+    )
+    raw = response.choices[0].message.content.strip()
     raw = re.sub(r"^```[a-z]*\n?", "", raw).rstrip("```").strip()
     return json.loads(raw)
 
@@ -153,7 +174,8 @@ def process():
 
     try:
         image_bytes = file.read()
-        data = parse_receipt(image_bytes)
+        ocr_text = ocr_image(image_bytes)
+        data = parse_receipt(ocr_text)
         items = calculate(data)
         html = build_html(data, items)
         return jsonify({"html": html, "data": data, "items": items})

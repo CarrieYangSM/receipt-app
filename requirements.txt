@@ -1,3 +1,7 @@
 flask>=3.0
 openai>=1.0
 python-dotenv>=1.0
+Pillow>=10.0
+google-generativeai>=0.7.0
+# Local only (requires: brew install tesseract tesseract-lang)
+pytesseract>=0.3.10
